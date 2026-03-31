@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(pip show:*)",
+      "Bash(pip3 show:*)",
+      "WebFetch(domain:docs.glassnode.com)",
+      "WebFetch(domain:docs.coingecko.com)",
+      "WebFetch(domain:docs.apscheduler.readthedocs.io)",
+      "WebFetch(domain:www.coingecko.com)",
+      "WebFetch(domain:apscheduler.readthedocs.io)",
+      "WebFetch(domain:github.com)"
+    ]
+  }
+}
