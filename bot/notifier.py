@@ -177,6 +177,44 @@ def send_email(message: str, subject: str, settings: Settings) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Alerta de queda semanal
+# ---------------------------------------------------------------------------
+
+def notify_drop_alert(snapshot: MetricSnapshot, drop_result, settings: Settings) -> None:
+    """Envia alerta quando detectada queda >= 10% no período de 7 dias."""
+    from .drop_alert import DropCheckResult
+
+    result: DropCheckResult = drop_result
+    ts = snapshot.timestamp.strftime("%d/%m/%Y %H:%M")
+    ref_date_str = result.reference_date.strftime("%d/%m/%Y") if result.reference_date else "?"
+    next_check = (snapshot.timestamp.date() + __import__("datetime").timedelta(days=7)).strftime("%d/%m/%Y")
+
+    drop_str = f"{result.drop_pct:.1f}%".replace(".", ",")
+    ref_price_usd = _fmt_usd(result.reference_price) if result.reference_price else "?"
+
+    message = (
+        f"<b>⚠️ ALERTA BITCOIN — QUEDA DE {drop_str} EM 7 DIAS</b>\n"
+        "\n"
+        f"<b>Preço atual:</b>      {_fmt_brl(snapshot.btc_price_brl)} ({_fmt_usd(snapshot.btc_price_usd)} USD)\n"
+        f"<b>Preço em {ref_date_str}:</b> {ref_price_usd} USD\n"
+        f"<b>Variação 7 dias:</b>  -{drop_str}\n"
+        f"<b>Data/Hora:</b>        {ts}\n"
+        "\n"
+        "Queda acumulada de 10%+ em 7 dias — <b>FORTE SINAL DE COMPRA</b> por queda recente.\n"
+        "\n"
+        f"<b>Próxima verificação de queda:</b> a partir de {next_check} (em 7 dias)\n"
+        "\n"
+        "⚠️  Isso NÃO é conselho financeiro. Faça sua própria análise."
+    )
+    subject = f"[Bitcoin Bot] ⚠️ Queda de {drop_str} em 7 dias — {snapshot.timestamp.strftime('%d/%m/%Y')}"
+
+    if settings.telegram_enabled:
+        send_telegram(message, settings)
+    if settings.email_enabled:
+        send_email(message, subject, settings)
+
+
+# ---------------------------------------------------------------------------
 # Notificação de inicialização
 # ---------------------------------------------------------------------------
 

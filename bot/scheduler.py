@@ -9,18 +9,34 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from .config import Settings
+from .drop_alert import check_drop
 from .metrics.aggregator import MetricFetchError, collect
-from .notifier import notify, notify_startup
+from .notifier import notify, notify_drop_alert, notify_startup
 from .scoring import evaluate
+from .state import load_state, save_state
 
 logger = logging.getLogger(__name__)
 
 
 def run_check_cycle(settings: Settings) -> None:
-    """Ciclo padrão: coleta métricas, pontua e notifica se houver sinal."""
+    """Ciclo padrão: coleta métricas, pontua, verifica queda semanal e notifica."""
     logger.info("Iniciando ciclo de verificação...")
     try:
         snapshot = collect(settings)
+
+        # --- Verificação de queda semanal (independente do scoring) ---
+        state = load_state()
+        drop_result, new_state = check_drop(
+            current_price=snapshot.btc_price_usd,
+            price_7d_ago=snapshot.price_7d_ago,
+            state=state,
+        )
+        save_state(new_state)
+
+        if drop_result.signal_triggered:
+            notify_drop_alert(snapshot, drop_result, settings)
+
+        # --- Scoring de métricas (MVRV + F&G + MAs) ---
         result = evaluate(snapshot, settings)
         logger.info(
             "BTC: $%s | MVRV: %s | F&G: %s | Pontuação: %d/100 — %s",
@@ -31,6 +47,7 @@ def run_check_cycle(settings: Settings) -> None:
             result.signal_label,
         )
         notify(snapshot, result, settings)
+
     except MetricFetchError as exc:
         logger.error("Ciclo pulado — falha ao obter métricas obrigatórias: %s", exc)
     except Exception as exc:
@@ -52,6 +69,9 @@ def run_weekly_status(settings: Settings) -> None:
 
 def start(settings: Settings) -> None:
     import datetime
+
+    # Envia startup antes de calcular next_run_time para evitar "Run time missed"
+    notify_startup(settings)
 
     scheduler = BlockingScheduler(timezone="America/Sao_Paulo")
 
@@ -86,5 +106,4 @@ def start(settings: Settings) -> None:
         "Scheduler iniciado. Verificação a cada %d minuto(s). Ctrl+C para encerrar.",
         settings.check_interval_minutes,
     )
-    notify_startup(settings)
     scheduler.start()

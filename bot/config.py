@@ -72,7 +72,7 @@ def load() -> Settings:
     recipients_raw = _get("EMAIL_RECIPIENTS")
     email_recipients = [r.strip() for r in recipients_raw.split(",") if r.strip()]
 
-    check_interval_minutes = _get_int("CHECK_INTERVAL_MINUTES", 60)
+    check_interval_minutes = _get_int("CHECK_INTERVAL_MINUTES", 1440)
     weekly_status_enabled = _get_bool("WEEKLY_STATUS_ENABLED", True)
 
     score_strong_buy = _get_int("SCORE_STRONG_BUY", 45)

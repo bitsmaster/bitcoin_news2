@@ -17,6 +17,7 @@ class MetricSnapshot:
     timestamp: datetime
     btc_price_usd: float
     btc_price_brl: float
+    price_7d_ago: float               # preço há 7 dias (do histórico diário CoinGecko)
     ma_50: float
     ma_200: float
     mvrv_ratio: float | None          # None = falha não fatal
@@ -38,7 +39,8 @@ def collect(settings: Settings) -> MetricSnapshot:
 
     historical = get_historical_prices(days=200)
     ma_50, ma_200 = compute_moving_averages(historical)
-    logger.debug("MA50: $%.2f | MA200: $%.2f", ma_50, ma_200)
+    price_7d_ago = historical[-8]  # índice -1 = hoje, -8 = 7 dias atrás
+    logger.debug("MA50: $%.2f | MA200: $%.2f | Preço 7d atrás: $%.2f", ma_50, ma_200, price_7d_ago)
 
     # --- Opcionais (falha registrada, ciclo continua) ---
     mvrv_ratio: float | None = None
@@ -66,6 +68,7 @@ def collect(settings: Settings) -> MetricSnapshot:
         timestamp=datetime.now(),
         btc_price_usd=price_usd,
         btc_price_brl=price_brl,
+        price_7d_ago=price_7d_ago,
         ma_50=ma_50,
         ma_200=ma_200,
         mvrv_ratio=mvrv_ratio,

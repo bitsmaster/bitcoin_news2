@@ -12,6 +12,8 @@ python main.py
 
 For a quick test cycle, set `CHECK_INTERVAL_MINUTES=1` in `.env` before starting.
 
+Default interval is **1440 minutes (24h)**.
+
 ## Architecture
 
 The bot follows a linear pipeline on each scheduled tick:
@@ -49,6 +51,17 @@ scheduler.py → metrics/aggregator.py → scoring.py → notifier.py
 | Moving averages | price < MA50 (above MA200) | 15 |
 
 `score_moving_averages` checks MA200 first; only falls through to the MA50 branch if price is **above** MA200.
+
+## 7-day drop alert (bot/drop_alert.py + bot/state.py)
+
+Independent of the scoring pipeline. Runs every daily cycle alongside the normal check.
+
+**Logic:**
+- **Normal mode:** compare current price vs `price_7d_ago` (7th entry from the end of the CoinGecko historical array). If drop ≥ 10%: send alert, enter cooldown.
+- **Cooldown (7 days):** skip all drop checks. `bot_state.json` stores `last_drop_signal_date` + `last_drop_signal_price`.
+- **Post-cooldown check:** compare current price vs price at the signal date. If drop ≥ 10% again: new alert + new 7-day cooldown. If not: reset to normal mode (next cycle uses rolling 7-day window again).
+
+State is persisted in `bot_state.json` (gitignored, lives on the server). Corrupted/missing file resets to normal mode safely.
 
 ## Key constraints
 
