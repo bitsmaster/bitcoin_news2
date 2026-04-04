@@ -28,6 +28,8 @@ def _execute_cycle(snapshot, settings: Settings) -> None:
         current_price=snapshot.btc_price_usd,
         price_7d_ago=snapshot.price_7d_ago,
         state=state,
+        threshold_pct=settings.drop_alert_threshold_pct,
+        cooldown_days=settings.drop_alert_cooldown_days,
     )
     save_state(new_state)
 
@@ -121,6 +123,8 @@ def run_weekly_status(settings: Settings) -> None:
         result = evaluate(snapshot, settings)
 
         from .news import get_weekly_crypto_news
+        from .metrics.trending import get_trending_coins
+
         news = []
         try:
             news = get_weekly_crypto_news()
@@ -128,7 +132,14 @@ def run_weekly_status(settings: Settings) -> None:
         except Exception as exc:
             logger.warning("Não foi possível obter notícias da semana: %s", exc)
 
-        notify(snapshot, result, settings, force=True, news=news)
+        trending = []
+        try:
+            trending = get_trending_coins()
+            logger.info("Trending coins obtidas: %d itens.", len(trending))
+        except Exception as exc:
+            logger.warning("Não foi possível obter trending coins: %s", exc)
+
+        notify(snapshot, result, settings, force=True, news=news, trending=trending)
     except MetricFetchError as exc:
         logger.error("Resumo semanal pulado — falha ao obter métricas: %s", exc)
     except Exception as exc:
@@ -146,7 +157,7 @@ def start(settings: Settings) -> None:
 
     _scheduler.add_job(
         run_check_cycle,
-        trigger=CronTrigger(hour=5, minute=0, timezone="America/Sao_Paulo"),
+        trigger=CronTrigger(hour=settings.check_hour, minute=settings.check_minute, timezone="America/Sao_Paulo"),
         kwargs={"settings": settings},
         id="check_cycle",
         name="Verificação de métricas Bitcoin",
@@ -171,5 +182,9 @@ def start(settings: Settings) -> None:
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
 
-    logger.info("Scheduler iniciado. Verificação diária às 05:00 (Brasília). Ctrl+C para encerrar.")
+    logger.info(
+        "Scheduler iniciado. Verificação diária às %02d:%02d (Brasília). Ctrl+C para encerrar.",
+        settings.check_hour,
+        settings.check_minute,
+    )
     _scheduler.start()

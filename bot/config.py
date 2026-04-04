@@ -35,6 +35,14 @@ class Settings:
     score_strong_buy: int
     score_moderate_buy: int
 
+    # Agendamento — horário da verificação diária
+    check_hour: int
+    check_minute: int
+
+    # Alerta de queda
+    drop_alert_threshold_pct: float
+    drop_alert_cooldown_days: int
+
     # Logging
     log_level: str
     log_file: str
@@ -75,6 +83,17 @@ def load() -> Settings:
     check_interval_minutes = _get_int("CHECK_INTERVAL_MINUTES", 1440)
     weekly_status_enabled = _get_bool("WEEKLY_STATUS_ENABLED", True)
 
+    check_hour = _get_int("CHECK_HOUR", 5)
+    check_minute = _get_int("CHECK_MINUTE", 0)
+
+    drop_alert_threshold_pct_raw = _get("DROP_ALERT_THRESHOLD_PCT", "10.0")
+    try:
+        drop_alert_threshold_pct = float(drop_alert_threshold_pct_raw)
+    except ValueError:
+        errors.append(f"DROP_ALERT_THRESHOLD_PCT deve ser um número (valor atual: '{drop_alert_threshold_pct_raw}')")
+        drop_alert_threshold_pct = 10.0
+    drop_alert_cooldown_days = _get_int("DROP_ALERT_COOLDOWN_DAYS", 7)
+
     score_strong_buy = _get_int("SCORE_STRONG_BUY", 45)
     score_moderate_buy = _get_int("SCORE_MODERATE_BUY", 30)
 
@@ -105,6 +124,15 @@ def load() -> Settings:
     if check_interval_minutes < 1:
         errors.append("CHECK_INTERVAL_MINUTES deve ser >= 1")
 
+    if not (0 <= check_hour <= 23):
+        errors.append(f"CHECK_HOUR deve ser entre 0 e 23 (valor atual: {check_hour})")
+    if not (0 <= check_minute <= 59):
+        errors.append(f"CHECK_MINUTE deve ser entre 0 e 59 (valor atual: {check_minute})")
+    if drop_alert_threshold_pct <= 0:
+        errors.append(f"DROP_ALERT_THRESHOLD_PCT deve ser > 0 (valor atual: {drop_alert_threshold_pct})")
+    if drop_alert_cooldown_days < 1:
+        errors.append(f"DROP_ALERT_COOLDOWN_DAYS deve ser >= 1 (valor atual: {drop_alert_cooldown_days})")
+
     if score_moderate_buy >= score_strong_buy:
         errors.append(
             f"SCORE_STRONG_BUY ({score_strong_buy}) deve ser maior que "
@@ -126,6 +154,10 @@ def load() -> Settings:
         email_recipients=email_recipients,
         check_interval_minutes=check_interval_minutes,
         weekly_status_enabled=weekly_status_enabled,
+        check_hour=check_hour,
+        check_minute=check_minute,
+        drop_alert_threshold_pct=drop_alert_threshold_pct,
+        drop_alert_cooldown_days=drop_alert_cooldown_days,
         score_strong_buy=score_strong_buy,
         score_moderate_buy=score_moderate_buy,
         log_level=log_level,

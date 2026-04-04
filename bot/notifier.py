@@ -57,6 +57,7 @@ def format_message(
     result: ScoringResult,
     weekly: bool = False,
     news: list[dict] | None = None,
+    trending: list[dict] | None = None,
 ) -> str:
     ts = snapshot.timestamp.strftime("%d/%m/%Y %H:%M")
 
@@ -106,6 +107,14 @@ def format_message(
         lines += ["", "─── Notícias da Semana ───"]
         for item in news:
             lines.append(f'📰 <a href="{item["link"]}">{item["title"]}</a> — {item["source"]}')
+
+    if weekly and trending:
+        lines += ["", "─── Trending Cripto da Semana ───"]
+        for coin in trending:
+            rank = f"#{coin['market_cap_rank']}" if coin.get("market_cap_rank") else "—"
+            change = coin.get("price_change_24h")
+            change_str = f"  {change:+.1f}% (24h)" if change is not None else ""
+            lines.append(f"🔥 <b>{coin['name']}</b> ({coin['symbol']})  {rank}{change_str}")
 
     lines += [
         "",
@@ -239,7 +248,7 @@ def notify_startup(settings: Settings) -> None:
         "<b>Bitcoin Bot iniciado com sucesso</b>\n"
         "\n"
         f"<b>Data/Hora:</b> {ts}\n"
-        f"<b>Intervalo de verificação:</b> a cada {settings.check_interval_minutes} minuto(s)\n"
+        f"<b>Verificação diária:</b> todo dia às {settings.check_hour:02d}:{settings.check_minute:02d} (horário de Brasília)\n"
         f"<b>Resumo semanal:</b> {weekly_info}\n"
         f"<b>Limiares:</b> Forte ≥ {settings.score_strong_buy} pts | Moderado ≥ {settings.score_moderate_buy} pts\n"
         "\n"
@@ -292,6 +301,7 @@ def notify(
     settings: Settings,
     force: bool = False,
     news: list[dict] | None = None,
+    trending: list[dict] | None = None,
 ) -> None:
     """
     Envia notificação quando há sinal de compra (ou force=True para resumo semanal).
@@ -302,7 +312,12 @@ def notify(
         return
 
     weekly = force and result.signal_level == "NENHUM"
-    message = format_message(snapshot, result, weekly=weekly, news=news if weekly else None)
+    message = format_message(
+        snapshot, result,
+        weekly=weekly,
+        news=news if weekly else None,
+        trending=trending if weekly else None,
+    )
 
     if weekly:
         subject = f"[Bitcoin Bot] Resumo Semanal — {snapshot.timestamp.strftime('%d/%m/%Y')}"

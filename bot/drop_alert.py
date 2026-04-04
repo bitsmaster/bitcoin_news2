@@ -8,10 +8,6 @@ from .state import BotState
 
 logger = logging.getLogger(__name__)
 
-COOLDOWN_DAYS = 7
-DROP_THRESHOLD_PCT = 10.0
-
-
 @dataclass
 class DropCheckResult:
     checked: bool               # False = pulado por cooldown ou dados insuficientes
@@ -27,6 +23,8 @@ def check_drop(
     current_price: float,
     price_7d_ago: float,
     state: BotState,
+    threshold_pct: float = 10.0,
+    cooldown_days: int = 7,
 ) -> tuple[DropCheckResult, BotState]:
     """
     Verifica se houve queda >= 10% no período relevante e atualiza o estado.
@@ -50,9 +48,9 @@ def check_drop(
         last_signal_date = date.fromisoformat(state.last_drop_signal_date)
         days_since = (today - last_signal_date).days
 
-        if days_since < COOLDOWN_DAYS:
+        if days_since < cooldown_days:
             # Ainda em cooldown — não verifica
-            days_remaining = COOLDOWN_DAYS - days_since
+            days_remaining = cooldown_days - days_since
             logger.info(
                 "Verificação de queda: cooldown ativo — %d dia(s) restante(s) (desde %s).",
                 days_remaining,
@@ -78,7 +76,7 @@ def check_drop(
             current_price, reference_price, reference_date.isoformat(), -drop_pct,
         )
 
-        if drop_pct >= DROP_THRESHOLD_PCT:
+        if drop_pct >= threshold_pct:
             new_state.last_drop_signal_date = today.isoformat()
             new_state.last_drop_signal_price = current_price
             logger.warning("SINAL DE QUEDA DISPARADO (pós-cooldown): %.1f%% de queda.", drop_pct)
@@ -93,7 +91,7 @@ def check_drop(
             in_cooldown=False,
             days_remaining=0,
             drop_pct=drop_pct,
-            signal_triggered=drop_pct >= DROP_THRESHOLD_PCT,
+            signal_triggered=drop_pct >= threshold_pct,
             reference_price=reference_price,
             reference_date=reference_date,
         ), new_state
@@ -107,7 +105,7 @@ def check_drop(
         current_price, price_7d_ago, -drop_pct,
     )
 
-    if drop_pct >= DROP_THRESHOLD_PCT:
+    if drop_pct >= threshold_pct:
         new_state.last_drop_signal_date = today.isoformat()
         new_state.last_drop_signal_price = current_price
         logger.warning("SINAL DE QUEDA DISPARADO: %.1f%% de queda em 7 dias.", drop_pct)
@@ -117,7 +115,7 @@ def check_drop(
         in_cooldown=False,
         days_remaining=0,
         drop_pct=drop_pct,
-        signal_triggered=drop_pct >= DROP_THRESHOLD_PCT,
+        signal_triggered=drop_pct >= threshold_pct,
         reference_price=price_7d_ago,
         reference_date=reference_date,
     ), new_state
