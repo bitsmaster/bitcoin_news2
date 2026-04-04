@@ -244,6 +244,35 @@ def notify_startup(settings: Settings) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Notificação de falha total na coleta de métricas
+# ---------------------------------------------------------------------------
+
+def notify_collection_error(error_msg: str, settings: Settings) -> None:
+    """Notifica que a coleta falhou em todas as fontes (CoinGecko e Binance)."""
+    from datetime import datetime
+
+    ts = datetime.now().strftime("%d/%m/%Y %H:%M")
+    message = (
+        "<b>⚠️ Bitcoin Bot — Erro ao Coletar Métricas</b>\n"
+        "\n"
+        f"<b>Data/Hora:</b> {ts}\n"
+        "\n"
+        "Não foi possível obter os dados de nenhuma fonte disponível "
+        "(CoinGecko e Binance indisponíveis).\n"
+        "\n"
+        f"<b>Erro:</b> {error_msg}\n"
+        "\n"
+        "O ciclo será retomado na próxima verificação agendada."
+    )
+    subject = f"[Bitcoin Bot] ⚠️ Erro ao coletar métricas — {ts}"
+
+    if settings.telegram_enabled:
+        send_telegram(message, settings)
+    if settings.email_enabled:
+        send_email(message, subject, settings)
+
+
+# ---------------------------------------------------------------------------
 # Dispatcher principal
 # ---------------------------------------------------------------------------
 
