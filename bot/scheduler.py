@@ -119,7 +119,16 @@ def run_weekly_status(settings: Settings) -> None:
     try:
         snapshot = collect(settings)
         result = evaluate(snapshot, settings)
-        notify(snapshot, result, settings, force=True)
+
+        from .news import get_weekly_crypto_news
+        news = []
+        try:
+            news = get_weekly_crypto_news()
+            logger.info("Notícias da semana obtidas: %d itens.", len(news))
+        except Exception as exc:
+            logger.warning("Não foi possível obter notícias da semana: %s", exc)
+
+        notify(snapshot, result, settings, force=True, news=news)
     except MetricFetchError as exc:
         logger.error("Resumo semanal pulado — falha ao obter métricas: %s", exc)
     except Exception as exc:
@@ -137,7 +146,7 @@ def start(settings: Settings) -> None:
 
     _scheduler.add_job(
         run_check_cycle,
-        trigger=IntervalTrigger(minutes=settings.check_interval_minutes),
+        trigger=CronTrigger(hour=5, minute=0, timezone="America/Sao_Paulo"),
         kwargs={"settings": settings},
         id="check_cycle",
         name="Verificação de métricas Bitcoin",
@@ -162,8 +171,5 @@ def start(settings: Settings) -> None:
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
 
-    logger.info(
-        "Scheduler iniciado. Verificação a cada %d minuto(s). Ctrl+C para encerrar.",
-        settings.check_interval_minutes,
-    )
+    logger.info("Scheduler iniciado. Verificação diária às 05:00 (Brasília). Ctrl+C para encerrar.")
     _scheduler.start()
