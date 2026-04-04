@@ -137,7 +137,7 @@ def start(settings: Settings) -> None:
 
     _scheduler.add_job(
         run_check_cycle,
-        trigger=IntervalTrigger(minutes=settings.check_interval_minutes),
+        trigger=CronTrigger(hour=5, minute=0, timezone="America/Sao_Paulo"),
         kwargs={"settings": settings},
         id="check_cycle",
         name="Verificação de métricas Bitcoin",
@@ -162,8 +162,5 @@ def start(settings: Settings) -> None:
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
 
-    logger.info(
-        "Scheduler iniciado. Verificação a cada %d minuto(s). Ctrl+C para encerrar.",
-        settings.check_interval_minutes,
-    )
+    logger.info("Scheduler iniciado. Verificação diária às 05:00 (Brasília). Ctrl+C para encerrar.")
     _scheduler.start()
