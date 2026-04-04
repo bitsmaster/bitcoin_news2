@@ -119,7 +119,16 @@ def run_weekly_status(settings: Settings) -> None:
     try:
         snapshot = collect(settings)
         result = evaluate(snapshot, settings)
-        notify(snapshot, result, settings, force=True)
+
+        from .news import get_weekly_crypto_news
+        news = []
+        try:
+            news = get_weekly_crypto_news()
+            logger.info("Notícias da semana obtidas: %d itens.", len(news))
+        except Exception as exc:
+            logger.warning("Não foi possível obter notícias da semana: %s", exc)
+
+        notify(snapshot, result, settings, force=True, news=news)
     except MetricFetchError as exc:
         logger.error("Resumo semanal pulado — falha ao obter métricas: %s", exc)
     except Exception as exc:

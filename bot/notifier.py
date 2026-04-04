@@ -52,7 +52,12 @@ def _fg_label(value: int | None, classification: str) -> str:
     return f"{value} — {classification}"
 
 
-def format_message(snapshot: MetricSnapshot, result: ScoringResult, weekly: bool = False) -> str:
+def format_message(
+    snapshot: MetricSnapshot,
+    result: ScoringResult,
+    weekly: bool = False,
+    news: list[dict] | None = None,
+) -> str:
     ts = snapshot.timestamp.strftime("%d/%m/%Y %H:%M")
 
     mvrv_pts = f"+{result.mvrv_score} pts" if result.mvrv_used else "0 pts (indisponível)"
@@ -96,6 +101,11 @@ def format_message(snapshot: MetricSnapshot, result: ScoringResult, weekly: bool
             "─── Interpretação ───",
             _build_interpretation(snapshot, result),
         ]
+
+    if weekly and news:
+        lines += ["", "─── Notícias da Semana ───"]
+        for item in news:
+            lines.append(f'📰 <a href="{item["link"]}">{item["title"]}</a> — {item["source"]}')
 
     lines += [
         "",
@@ -281,16 +291,18 @@ def notify(
     result: ScoringResult,
     settings: Settings,
     force: bool = False,
+    news: list[dict] | None = None,
 ) -> None:
     """
     Envia notificação quando há sinal de compra (ou force=True para resumo semanal).
     force=True ignora o nível do sinal e envia mesmo sem alerta.
+    news é incluído apenas no resumo semanal.
     """
     if result.signal_level == "NENHUM" and not force:
         return
 
     weekly = force and result.signal_level == "NENHUM"
-    message = format_message(snapshot, result, weekly=weekly)
+    message = format_message(snapshot, result, weekly=weekly, news=news if weekly else None)
 
     if weekly:
         subject = f"[Bitcoin Bot] Resumo Semanal — {snapshot.timestamp.strftime('%d/%m/%Y')}"
