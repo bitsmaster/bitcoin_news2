@@ -17,7 +17,7 @@ class MetricSnapshot:
     timestamp: datetime
     btc_price_usd: float
     btc_price_brl: float
-    price_7d_ago: float               # preço há 7 dias (do histórico diário CoinGecko)
+    price_7d_ago: float               # preço há 7 dias (do histórico diário)
     ma_50: float
     ma_200: float
     mvrv_ratio: float | None          # None = falha não fatal
@@ -26,23 +26,10 @@ class MetricSnapshot:
     fetch_errors: list[str] = field(default_factory=list)
 
 
-def collect(settings: Settings) -> MetricSnapshot:
-    """
-    Coleta todas as métricas. Falhas em MVRV e Fear & Greed são não fatais
-    (campo fica None, ciclo continua). Falha em preço/histórico é fatal.
-    """
+def _collect_optional_metrics() -> tuple[float | None, int | None, str, list[str]]:
+    """Coleta MVRV e Fear & Greed (opcionais). Falhas são registradas, não fatais."""
     errors: list[str] = []
 
-    # --- Obrigatórios (falha cancela o ciclo) ---
-    price_usd, price_brl = get_current_price()
-    logger.debug("Preço BTC: $%.2f USD / R$%.2f BRL", price_usd, price_brl)
-
-    historical = get_historical_prices(days=200)
-    ma_50, ma_200 = compute_moving_averages(historical)
-    price_7d_ago = historical[-8]  # índice -1 = hoje, -8 = 7 dias atrás
-    logger.debug("MA50: $%.2f | MA200: $%.2f | Preço 7d atrás: $%.2f", ma_50, ma_200, price_7d_ago)
-
-    # --- Opcionais (falha registrada, ciclo continua) ---
     mvrv_ratio: float | None = None
     try:
         mvrv_ratio = get_mvrv_ratio()
@@ -64,6 +51,23 @@ def collect(settings: Settings) -> MetricSnapshot:
         logger.warning(msg)
         errors.append(msg)
 
+    return mvrv_ratio, fear_greed_value, fear_greed_classification, errors
+
+
+def _build_snapshot(
+    price_usd: float,
+    price_brl: float,
+    historical: list[float],
+    extra_errors: list[str] | None = None,
+) -> MetricSnapshot:
+    """Monta MetricSnapshot a partir dos dados de preço e histórico."""
+    ma_50, ma_200 = compute_moving_averages(historical)
+    price_7d_ago = historical[-8]  # índice -1 = hoje, -8 = 7 dias atrás
+    logger.debug("MA50: $%.2f | MA200: $%.2f | Preço 7d atrás: $%.2f", ma_50, ma_200, price_7d_ago)
+
+    mvrv_ratio, fear_greed_value, fear_greed_classification, opt_errors = _collect_optional_metrics()
+    errors = list(extra_errors or []) + opt_errors
+
     return MetricSnapshot(
         timestamp=datetime.now(),
         btc_price_usd=price_usd,
@@ -75,4 +79,39 @@ def collect(settings: Settings) -> MetricSnapshot:
         fear_greed_value=fear_greed_value,
         fear_greed_classification=fear_greed_classification,
         fetch_errors=errors,
+    )
+
+
+def collect(settings: Settings) -> MetricSnapshot:
+    """
+    Coleta todas as métricas via CoinGecko. Falhas em MVRV e Fear & Greed são não fatais.
+    Falha em preço/histórico levanta MetricFetchError (fatal para o ciclo).
+    """
+    price_usd, price_brl = get_current_price()
+    logger.debug("Preço BTC: $%.2f USD / R$%.2f BRL", price_usd, price_brl)
+
+    historical = get_historical_prices(days=200)
+    logger.debug("Histórico CoinGecko obtido: %d pontos", len(historical))
+
+    return _build_snapshot(price_usd, price_brl, historical)
+
+
+def collect_alternative(settings: Settings) -> MetricSnapshot:
+    """
+    Coleta métricas usando Binance (USD/histórico) e Mercado Bitcoin (BRL) como fonte alternativa.
+    Chamado apenas quando CoinGecko falha no retry.
+    """
+    from .binance import get_current_price_binance, get_historical_prices_binance
+
+    price_usd, price_brl = get_current_price_binance()
+    logger.debug("Preço BTC (Binance): $%.2f USD / R$%.2f BRL", price_usd, price_brl)
+
+    historical = get_historical_prices_binance(days=200)
+    logger.debug("Histórico Binance obtido: %d pontos", len(historical))
+
+    return _build_snapshot(
+        price_usd,
+        price_brl,
+        historical,
+        extra_errors=["Fonte alternativa: Binance/Mercado Bitcoin (CoinGecko indisponível)"],
     )
