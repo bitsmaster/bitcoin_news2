@@ -1,12 +1,9 @@
 from __future__ import annotations
 
 import logging
-import signal
-import sys
 
-from apscheduler.schedulers.blocking import BlockingScheduler
+from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
-from apscheduler.triggers.interval import IntervalTrigger
 
 from .config import Settings
 from .drop_alert import check_drop
@@ -17,7 +14,7 @@ from .state import load_state, save_state
 
 logger = logging.getLogger(__name__)
 
-_scheduler: BlockingScheduler | None = None
+_scheduler: BackgroundScheduler | None = None
 _RETRY_JOB_ID = "check_cycle_retry"
 
 
@@ -136,13 +133,13 @@ def run_weekly_status(settings: Settings) -> None:
 
 
 def start(settings: Settings) -> None:
+    """Inicia o scheduler em background (não bloqueia a thread chamadora)."""
     global _scheduler
     import datetime
 
-    # Envia startup antes de calcular next_run_time para evitar "Run time missed"
     notify_startup(settings)
 
-    _scheduler = BlockingScheduler(timezone="America/Sao_Paulo")
+    _scheduler = BackgroundScheduler(timezone="America/Sao_Paulo")
 
     _scheduler.add_job(
         run_check_cycle,
@@ -163,13 +160,5 @@ def start(settings: Settings) -> None:
         )
         logger.info("Resumo semanal agendado: todo domingo às 09h (Brasília).")
 
-    def _shutdown(signum, frame):
-        logger.info("Sinal %d recebido — encerrando...", signum)
-        _scheduler.shutdown(wait=False)
-        sys.exit(0)
-
-    signal.signal(signal.SIGINT, _shutdown)
-    signal.signal(signal.SIGTERM, _shutdown)
-
-    logger.info("Scheduler iniciado. Verificação diária às 05:00 (Brasília). Ctrl+C para encerrar.")
     _scheduler.start()
+    logger.info("Scheduler iniciado em background. Verificação diária às 05:00 (Brasília).")
