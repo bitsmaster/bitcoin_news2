@@ -311,7 +311,7 @@ def notify(
     if result.signal_level == "NENHUM" and not force:
         return
 
-    weekly = force and result.signal_level == "NENHUM"
+    weekly = force
     message = format_message(
         snapshot, result,
         weekly=weekly,

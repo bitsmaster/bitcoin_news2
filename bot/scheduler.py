@@ -179,8 +179,10 @@ def start(settings: Settings) -> None:
         _scheduler.shutdown(wait=False)
         sys.exit(0)
 
-    signal.signal(signal.SIGINT, _shutdown)
-    signal.signal(signal.SIGTERM, _shutdown)
+    import threading
+    if threading.current_thread() is threading.main_thread():
+        signal.signal(signal.SIGINT, _shutdown)
+        signal.signal(signal.SIGTERM, _shutdown)
 
     logger.info(
         "Scheduler iniciado. Verificação diária às %02d:%02d (Brasília). Ctrl+C para encerrar.",
