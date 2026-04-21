@@ -4,6 +4,7 @@ Telegram webhook endpoint for the Bitcoin bot.
 Commands:
   /btc    — Bitcoin analysis (cached 60 s; duplicate calls blocked while in-flight)
   /news   — Latest crypto news (cached 10 min)
+  /dollar — USD/BRL fair value vs market rate (PPP, cached 60 min)
   /status — Liveness check
 
 Only processes messages from TELEGRAM_CHAT_ID; all others are silently ignored.
@@ -58,6 +59,9 @@ class _Cache:
 
 _btc_cache = _Cache()
 _news_cache = _Cache()
+_dollar_cache = _Cache()
+
+_DOLLAR_CACHE_TTL: int = 3600  # 1 hour — PPP data is slow-moving
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +190,77 @@ def _handle_news(chat_id: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# /dollar handler
+# ---------------------------------------------------------------------------
+
+def _fmt_brl(value: float) -> str:
+    return f"R$ {value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _fetch_dollar() -> str:
+    """Blocking: fetch PPP data and return a formatted HTML string."""
+    from bot.metrics.ppp import get_ppp_data
+
+    d = get_ppp_data()
+    market = d["market_rate"]
+    ppp = d["ppp_rate"]
+    dev = d["deviation_pct"]
+    year = d["ppp_year"]
+
+    if dev < -10:
+        signal = "🟢 <b>Dólar barato</b> — bom momento para comprar USD"
+    elif dev <= 10:
+        signal = "🟡 <b>Dólar próximo do valor justo</b>"
+    else:
+        signal = "🔴 <b>Dólar caro</b>"
+
+    dev_str = f"{dev:+.1f}%".replace(".", ",")
+    lines = [
+        "<b>💵 Câmbio USD/BRL — Paridade do Poder de Compra</b>",
+        "",
+        f"<b>Taxa de mercado:</b>  {_fmt_brl(market)}",
+        f"<b>Valor justo (PPP):</b> {_fmt_brl(ppp)}  <i>(ref. {year})</i>",
+        f"<b>Desvio:</b>           {dev_str} em relação ao valor justo",
+        "",
+        signal,
+        "",
+        "⚠️  Isso NÃO é conselho financeiro. Faça sua própria análise.",
+    ]
+    return "\n".join(lines)
+
+
+def _handle_dollar(chat_id: str) -> None:
+    """Cache-aware /dollar handler (runs in a daemon thread)."""
+    with _dollar_cache.lock:
+        if _dollar_cache.is_fresh(_DOLLAR_CACHE_TTL):
+            age = time.monotonic() - _dollar_cache.fetched_at
+            logger.info("/dollar: cache hit (age=%.1fs)", age)
+            reply = _dollar_cache.value
+        elif _dollar_cache.in_flight:
+            reply = "⏳ Consultando dados. Aguarde alguns segundos e tente novamente."
+        else:
+            reply = None
+            _dollar_cache.in_flight = True
+
+    if reply is not None:
+        send_message(chat_id, reply)
+        return
+
+    try:
+        message = _fetch_dollar()
+        with _dollar_cache.lock:
+            _dollar_cache.value = message
+            _dollar_cache.fetched_at = time.monotonic()
+            _dollar_cache.in_flight = False
+        send_message(chat_id, message)
+    except Exception as exc:
+        logger.exception("Error fetching dollar PPP data: %s", exc)
+        with _dollar_cache.lock:
+            _dollar_cache.in_flight = False
+        send_message(chat_id, f"⚠️ Erro ao buscar dados do câmbio: {exc}")
+
+
+# ---------------------------------------------------------------------------
 # Webhook endpoint
 # ---------------------------------------------------------------------------
 
@@ -221,6 +296,8 @@ async def telegram_webhook(request: Request) -> JSONResponse:
         threading.Thread(target=_handle_btc, args=(chat_id,), daemon=True).start()
     elif text.startswith("/news"):
         threading.Thread(target=_handle_news, args=(chat_id,), daemon=True).start()
+    elif text.startswith("/dollar"):
+        threading.Thread(target=_handle_dollar, args=(chat_id,), daemon=True).start()
     elif text.startswith("/status"):
         send_message(chat_id, "🤖 Bot online and running")
     else:
