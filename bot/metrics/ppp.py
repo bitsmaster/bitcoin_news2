@@ -2,11 +2,12 @@
 Paridade do Poder de Compra (PPP) — USD/BRL.
 
 Calcula o valor justo (fair value) do dólar em reais usando dados do Banco Mundial
-e compara com a taxa de câmbio atual via AwesomeAPI.
+e compara com a taxa de câmbio atual via BCB PTAX (Banco Central do Brasil).
 """
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta
 
 import requests
 
@@ -73,10 +74,44 @@ def _fetch_ppp_rate() -> tuple[float, int]:
 
 
 def _fetch_market_rate() -> float:
-    """Busca a taxa de câmbio USD/BRL atual via AwesomeAPI."""
+    """
+    Busca a taxa de câmbio USD/BRL atual.
+    Fonte primária: Banco Central do Brasil (PTAX) — oficial, sem rate limit.
+    Fallback: AwesomeAPI.
+    """
+    try:
+        return _fetch_bcb_ptax()
+    except Exception as exc:
+        logger.warning("BCB PTAX indisponível (%s), tentando AwesomeAPI...", exc)
+
     try:
         resp = requests.get(AWESOME_URL, timeout=TIMEOUT)
         resp.raise_for_status()
         return float(resp.json()["USDBRL"]["bid"])
     except Exception as exc:
-        raise MetricFetchError(f"AwesomeAPI USD/BRL: {exc}") from exc
+        raise MetricFetchError(f"Taxa de câmbio USD/BRL indisponível: {exc}") from exc
+
+
+def _fetch_bcb_ptax() -> float:
+    """Busca a última cotação PTAX do Banco Central do Brasil."""
+    # Janela de 10 dias para garantir que pega a cotação mesmo em feriados/fins de semana
+    end = datetime.now()
+    start = end - timedelta(days=10)
+    url = (
+        "https://olinda.bcb.gov.br/olinda/servico/PTAX/versao/v1/odata/"
+        "CotacaoDolarPeriodo(dataInicial=@dataInicial,dataFinalCotacao=@dataFinalCotacao)"
+        "?@dataInicial='{start}'&@dataFinalCotacao='{end}'"
+        "&$top=1&$orderby=dataHoraCotacao%20desc"
+        "&$format=json&$select=cotacaoCompra,cotacaoVenda"
+    ).format(
+        start=start.strftime("%m-%d-%Y"),
+        end=end.strftime("%m-%d-%Y"),
+    )
+    resp = requests.get(url, timeout=TIMEOUT)
+    resp.raise_for_status()
+    entries = resp.json().get("value", [])
+    if not entries:
+        raise MetricFetchError("BCB PTAX: nenhuma cotação encontrada.")
+    # Usa a média entre compra e venda
+    entry = entries[0]
+    return (float(entry["cotacaoCompra"]) + float(entry["cotacaoVenda"])) / 2
