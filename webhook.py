@@ -15,6 +15,7 @@ import logging
 import os
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -32,8 +33,27 @@ app = FastAPI(title="Bitcoin Bot Webhook")
 _BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
 _ALLOWED_CHAT_ID: str = os.getenv("TELEGRAM_CHAT_ID", "")
 
-_BTC_CACHE_TTL: int = 60    # seconds — avoids CoinGecko 429s on repeated /btc
-_NEWS_CACHE_TTL: int = 600  # 10 minutes — news doesn't change that fast
+_BTC_CACHE_TTL: int = 60      # seconds — avoids CoinGecko 429s on repeated /btc
+_NEWS_CACHE_TTL: int = 600    # 10 minutes — news doesn't change that fast
+_DOLLAR_CACHE_TTL: int = 3600 # 1 hour — PPP data is slow-moving
+
+
+# ---------------------------------------------------------------------------
+# Settings (lazy-loaded once; environment never changes at runtime)
+# ---------------------------------------------------------------------------
+
+_settings_lock = threading.Lock()
+_settings = None
+
+
+def _get_settings():
+    global _settings
+    if _settings is None:
+        with _settings_lock:
+            if _settings is None:
+                from bot.config import load as _load
+                _settings = _load()
+    return _settings
 
 
 # ---------------------------------------------------------------------------
@@ -61,8 +81,6 @@ _btc_cache = _Cache()
 _news_cache = _Cache()
 _dollar_cache = _Cache()
 
-_DOLLAR_CACHE_TTL: int = 3600  # 1 hour — PPP data is slow-moving
-
 
 # ---------------------------------------------------------------------------
 # Telegram API helper
@@ -82,42 +100,36 @@ def send_message(chat_id: str, text: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# /btc handler
+# Generic cache-aware dispatcher
 # ---------------------------------------------------------------------------
 
-def _fetch_btc() -> str:
-    """Blocking: collect metrics, evaluate, return formatted HTML string."""
-    from bot.config import load as load_settings
-    from bot.metrics.aggregator import collect
-    from bot.notifier import format_message
-    from bot.scoring import evaluate
-
-    settings = load_settings()
-    snapshot = collect(settings)
-    result = evaluate(snapshot, settings)
-    return format_message(snapshot, result)
-
-
-def _handle_btc(chat_id: str) -> None:
+def _cached_fetch(
+    name: str,
+    cache: _Cache,
+    ttl: int,
+    fetch_fn: Callable[[], str],
+    chat_id: str,
+    in_flight_msg: str,
+    error_prefix: str,
+) -> None:
     """
-    Cache-aware /btc handler (runs in a daemon thread).
+    Runs fetch_fn() at most once per TTL window, per cache object.
 
     State machine (all state transitions under lock; I/O outside):
-      cache fresh  → reply with cached value immediately
-      in_flight    → reply with "already running" message
-      miss         → set in_flight, fetch, update cache
+      cache fresh → reply with cached value immediately
+      in_flight   → reply with in_flight_msg
+      miss        → set in_flight, call fetch_fn(), update cache
     """
-    with _btc_cache.lock:
-        if _btc_cache.is_fresh(_BTC_CACHE_TTL):
-            age = time.monotonic() - _btc_cache.fetched_at
-            logger.info("/btc: cache hit (age=%.1fs)", age)
-            reply = _btc_cache.value
-        elif _btc_cache.in_flight:
-            logger.info("/btc: fetch already in progress — skipping duplicate")
-            reply = "⏳ Consulta já em andamento. Aguarde alguns segundos e tente novamente."
+    with cache.lock:
+        if cache.is_fresh(ttl):
+            logger.info("%s: cache hit (age=%.1fs)", name, time.monotonic() - cache.fetched_at)
+            reply = cache.value
+        elif cache.in_flight:
+            logger.info("%s: fetch already in progress — skipping duplicate", name)
+            reply = in_flight_msg
         else:
             reply = None
-            _btc_cache.in_flight = True
+            cache.in_flight = True
 
     # Send cached/in-flight reply without holding the lock
     if reply is not None:
@@ -126,25 +138,47 @@ def _handle_btc(chat_id: str) -> None:
 
     # Cache miss — run the actual fetch outside the lock
     try:
-        message = _fetch_btc()
-        with _btc_cache.lock:
-            _btc_cache.value = message
-            _btc_cache.fetched_at = time.monotonic()
-            _btc_cache.in_flight = False
+        message = fetch_fn()
+        with cache.lock:
+            cache.value = message
+            cache.fetched_at = time.monotonic()
+            cache.in_flight = False
         send_message(chat_id, message)
     except Exception as exc:
-        logger.exception("Error running BTC check: %s", exc)
-        with _btc_cache.lock:
-            _btc_cache.in_flight = False
-        send_message(chat_id, f"⚠️ Erro ao coletar dados do Bitcoin: {exc}")
+        logger.exception("%s error: %s", name, exc)
+        with cache.lock:
+            cache.in_flight = False
+        send_message(chat_id, f"⚠️ {error_prefix}: {exc}")
 
 
 # ---------------------------------------------------------------------------
-# /news handler
+# /btc
+# ---------------------------------------------------------------------------
+
+def _fetch_btc() -> str:
+    from bot.metrics.aggregator import collect
+    from bot.notifier import format_message
+    from bot.scoring import evaluate
+
+    settings = _get_settings()
+    snapshot = collect(settings)
+    result = evaluate(snapshot, settings)
+    return format_message(snapshot, result)
+
+
+def _handle_btc(chat_id: str) -> None:
+    _cached_fetch(
+        "/btc", _btc_cache, _BTC_CACHE_TTL, _fetch_btc, chat_id,
+        "⏳ Consulta já em andamento. Aguarde alguns segundos e tente novamente.",
+        "Erro ao coletar dados do Bitcoin",
+    )
+
+
+# ---------------------------------------------------------------------------
+# /news
 # ---------------------------------------------------------------------------
 
 def _fetch_news() -> str:
-    """Blocking: fetch RSS news and return a formatted HTML string."""
     from bot.news import get_weekly_crypto_news
 
     items = get_weekly_crypto_news()
@@ -154,43 +188,19 @@ def _fetch_news() -> str:
     lines = ["<b>📰 Notícias Cripto — Últimos 7 dias</b>", ""]
     for item in items:
         lines.append(f'• <a href="{item["link"]}">{item["title"]}</a> — <i>{item["source"]}</i>')
-
     return "\n".join(lines)
 
 
 def _handle_news(chat_id: str) -> None:
-    """Cache-aware /news handler (runs in a daemon thread)."""
-    with _news_cache.lock:
-        if _news_cache.is_fresh(_NEWS_CACHE_TTL):
-            age = time.monotonic() - _news_cache.fetched_at
-            logger.info("/news: cache hit (age=%.1fs)", age)
-            reply = _news_cache.value
-        elif _news_cache.in_flight:
-            reply = "⏳ Buscando notícias. Aguarde alguns segundos e tente novamente."
-        else:
-            reply = None
-            _news_cache.in_flight = True
-
-    if reply is not None:
-        send_message(chat_id, reply)
-        return
-
-    try:
-        message = _fetch_news()
-        with _news_cache.lock:
-            _news_cache.value = message
-            _news_cache.fetched_at = time.monotonic()
-            _news_cache.in_flight = False
-        send_message(chat_id, message)
-    except Exception as exc:
-        logger.exception("Error fetching news: %s", exc)
-        with _news_cache.lock:
-            _news_cache.in_flight = False
-        send_message(chat_id, f"⚠️ Erro ao buscar notícias: {exc}")
+    _cached_fetch(
+        "/news", _news_cache, _NEWS_CACHE_TTL, _fetch_news, chat_id,
+        "⏳ Buscando notícias. Aguarde alguns segundos e tente novamente.",
+        "Erro ao buscar notícias",
+    )
 
 
 # ---------------------------------------------------------------------------
-# /dollar handler
+# /dollar
 # ---------------------------------------------------------------------------
 
 def _fmt_brl(value: float) -> str:
@@ -198,7 +208,6 @@ def _fmt_brl(value: float) -> str:
 
 
 def _fetch_dollar() -> str:
-    """Blocking: fetch PPP data and return a formatted HTML string."""
     from bot.metrics.ppp import get_ppp_data
 
     d = get_ppp_data()
@@ -230,34 +239,11 @@ def _fetch_dollar() -> str:
 
 
 def _handle_dollar(chat_id: str) -> None:
-    """Cache-aware /dollar handler (runs in a daemon thread)."""
-    with _dollar_cache.lock:
-        if _dollar_cache.is_fresh(_DOLLAR_CACHE_TTL):
-            age = time.monotonic() - _dollar_cache.fetched_at
-            logger.info("/dollar: cache hit (age=%.1fs)", age)
-            reply = _dollar_cache.value
-        elif _dollar_cache.in_flight:
-            reply = "⏳ Consultando dados. Aguarde alguns segundos e tente novamente."
-        else:
-            reply = None
-            _dollar_cache.in_flight = True
-
-    if reply is not None:
-        send_message(chat_id, reply)
-        return
-
-    try:
-        message = _fetch_dollar()
-        with _dollar_cache.lock:
-            _dollar_cache.value = message
-            _dollar_cache.fetched_at = time.monotonic()
-            _dollar_cache.in_flight = False
-        send_message(chat_id, message)
-    except Exception as exc:
-        logger.exception("Error fetching dollar PPP data: %s", exc)
-        with _dollar_cache.lock:
-            _dollar_cache.in_flight = False
-        send_message(chat_id, f"⚠️ Erro ao buscar dados do câmbio: {exc}")
+    _cached_fetch(
+        "/dollar", _dollar_cache, _DOLLAR_CACHE_TTL, _fetch_dollar, chat_id,
+        "⏳ Consultando dados. Aguarde alguns segundos e tente novamente.",
+        "Erro ao buscar dados do câmbio",
+    )
 
 
 # ---------------------------------------------------------------------------

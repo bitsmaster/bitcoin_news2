@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import logging
 import signal
 import sys
@@ -52,7 +53,6 @@ def _schedule_retry(settings: Settings) -> None:
     """Agenda uma nova tentativa de coleta para daqui a 1 hora."""
     if _scheduler is None:
         return
-    import datetime as _dt
 
     # Remove job de retry anterior caso já exista
     try:
@@ -60,7 +60,7 @@ def _schedule_retry(settings: Settings) -> None:
     except Exception:
         pass
 
-    retry_time = _dt.datetime.now() + _dt.timedelta(hours=1)
+    retry_time = datetime.datetime.now() + datetime.timedelta(hours=1)
     _scheduler.add_job(
         _run_retry_cycle,
         trigger="date",
@@ -148,7 +148,6 @@ def run_weekly_status(settings: Settings) -> None:
 
 def start(settings: Settings) -> None:
     global _scheduler
-    import datetime
 
     # Envia startup antes de calcular next_run_time para evitar "Run time missed"
     notify_startup(settings)

@@ -15,9 +15,14 @@ def get_trending_coins(max_items: int = 5) -> list[dict]:
     Retorna lista vazia se falhar (não-fatal).
     """
     url = "https://api.coingecko.com/api/v3/search/trending"
-    resp = requests.get(url, timeout=TIMEOUT)
-    resp.raise_for_status()
-    coins = resp.json().get("coins", [])[:max_items]
+    try:
+        resp = requests.get(url, timeout=TIMEOUT)
+        resp.raise_for_status()
+        coins = resp.json().get("coins", [])[:max_items]
+    except Exception as exc:
+        logger.warning("Falha ao buscar trending coins: %s", exc)
+        return []
+
     result = []
     for entry in coins:
         item = entry.get("item", {})

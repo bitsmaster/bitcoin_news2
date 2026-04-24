@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 import smtplib
+from datetime import datetime, timedelta
 from email.mime.text import MIMEText
 
 import requests
@@ -206,7 +207,7 @@ def notify_drop_alert(snapshot: MetricSnapshot, drop_result, settings: Settings)
     result: DropCheckResult = drop_result
     ts = snapshot.timestamp.strftime("%d/%m/%Y %H:%M")
     ref_date_str = result.reference_date.strftime("%d/%m/%Y") if result.reference_date else "?"
-    next_check = (snapshot.timestamp.date() + __import__("datetime").timedelta(days=7)).strftime("%d/%m/%Y")
+    next_check = (snapshot.timestamp.date() + timedelta(days=7)).strftime("%d/%m/%Y")
 
     drop_str = f"{result.drop_pct:.1f}%".replace(".", ",")
     ref_price_usd = _fmt_usd(result.reference_price) if result.reference_price else "?"
@@ -239,8 +240,6 @@ def notify_drop_alert(snapshot: MetricSnapshot, drop_result, settings: Settings)
 
 def notify_startup(settings: Settings) -> None:
     """Envia mensagem de confirmação assim que o bot é iniciado."""
-    from datetime import datetime
-
     ts = datetime.now().strftime("%d/%m/%Y %H:%M")
     weekly_info = "Sim — todo domingo às 09h" if settings.weekly_status_enabled else "Não"
 
@@ -268,8 +267,6 @@ def notify_startup(settings: Settings) -> None:
 
 def notify_collection_error(error_msg: str, settings: Settings) -> None:
     """Notifica que a coleta falhou em todas as fontes (CoinGecko e Binance)."""
-    from datetime import datetime
-
     ts = datetime.now().strftime("%d/%m/%Y %H:%M")
     message = (
         "<b>⚠️ Bitcoin Bot — Erro ao Coletar Métricas</b>\n"
